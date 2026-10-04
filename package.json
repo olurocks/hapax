@@ -1,0 +1,19 @@
+{
+  "name": "hapax",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "contracts:build": "cd contracts && forge build",
+    "contracts:test": "cd contracts && forge test",
+    "abis": "pnpm contracts:build && node shared/scripts/export-abis.mjs",
+    "deploy:local": "cd contracts && forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast",
+    "deploy:testnet": "cd contracts && forge script script/Deploy.s.sol --rpc-url rh_testnet --broadcast --slow",
+    "broker": "pnpm --filter @hapax/broker start",
+    "keeper": "pnpm --filter @hapax/keeper start",
+    "market": "pnpm --filter @hapax/market start",
+    "agent": "pnpm --filter @hapax/agent start",
+    "web": "pnpm --filter @hapax/web dev",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

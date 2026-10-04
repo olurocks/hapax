@@ -1,0 +1,9 @@
+packages:
+  - shared
+  - broker
+  - keeper
+  - market
+  - agent
+  - web
+allowBuilds:
+  esbuild: true

@@ -1,0 +1,21 @@
+node_modules/
+.env
+.env.*
+!.env.example
+
+# Foundry
+contracts/lib/
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/31337/
+contracts/deployments/31337.json
+
+# Services
+broker/state.*.json
+
+# Web
+web/.next/
+web/out/
+
+.DS_Store
+web/dist/
