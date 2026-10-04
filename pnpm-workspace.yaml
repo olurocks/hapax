@@ -4,6 +4,7 @@ packages:
   - keeper
   - market
   - agent
+  - sim
   - web
 allowBuilds:
   esbuild: true

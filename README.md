@@ -7,7 +7,7 @@
 - **About 4x the buying power of cash-out credit.** Borrowed USDG never leaves the facility, so your collateral only backs what the positions could lose. The same $400k account goes from $175k to $700k of buying power.
 - **Risk management that doesn't stop on Friday.** Chainlink stock feeds update 24/5; Robinhood stock tokens trade 24/7. A session-aware risk engine revalues everything from the live onchain market on weekends, deleverages automatically, and freezes in the same block if the broker revokes.
 
-Built for Arbitrum Open House Singapore (Robinhood Chain). Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Built for Arbitrum Open House Singapore (Robinhood Chain). Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Live testnet addresses: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md).
 
 ## Real vs simulated
 
@@ -19,7 +19,8 @@ Built for Arbitrum Open House Singapore (Robinhood Chain). Full design: [docs/AR
 | Agent mandate (token list, position cap, expiry, kill switch), enforced onchain | |
 | AI agent trading through the mandate (Claude, with a rules fallback) | |
 | Two-signal risk engine, state machine, permissionless deleverage | Broker-side sale of shares on default |
-| Robinhood testnet stock tokens (TSLA, AMZN, NFLX) and USDG | Venue liquidity (demo venue priced off the live feed) |
+| USDG as the settlement currency: pool, venue quotes, repayment | Venue liquidity (demo venue priced off the live feed) |
+| Contract behaviour is identical on real or mock tokens | The live testnet deploy uses **mock** TSLA/AMZN/NFLX/USDG: the faucet caps at ~5 shares and USDG is not obtainable at scale, so a $1M pool needs mintable tokens. Real token addresses in [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md) |
 
 ## Layout
 
@@ -30,8 +31,9 @@ broker/      Broker simulator: signs attestations, operator API (revoke, encumbe
 keeper/      Evaluates facilities, pokes state changes, deleverages
 market/      Demo market operator: open/close the session, move live prices
 agent/       AI agent: Claude turns plain-English instructions into trades through the agent key
+sim/         Weekend-gap simulation endpoint: broker-only margin vs Hapax, lender loss for each
 web/         Dashboard: buying power, risk, agent mandate, activity feed with onchain refusals, demo console
-docs/        Architecture
+docs/        Architecture write-up and live deployment addresses
 ```
 
 ## Run locally
@@ -51,7 +53,8 @@ pnpm broker                    # terminal 3, :8787
 pnpm keeper                    # terminal 4
 pnpm agent                     # terminal 5, :8789 (set ANTHROPIC_API_KEY for Claude; otherwise rules mode;
                                #   AGENT_INTERVAL_MS=0 turns off autorun so the demo console drives every decision)
-pnpm web                       # terminal 6, dashboard at http://localhost:5173
+pnpm sim                       # terminal 6, :8790 (GET /sim weekend-gap comparison; no chain needed)
+pnpm web                       # terminal 7, dashboard at http://localhost:5173
 ```
 
 The dashboard reads the chain directly and drives the demo services from its demo console. Owner actions use a browser wallet, or `VITE_DEV_OWNER_PK` on local Anvil.
@@ -72,4 +75,4 @@ curl -X POST localhost:8787/revoke -d '{"facility":"0x..."}'      # broker revok
 
 ## Robinhood Chain testnet
 
-Chain id 46630, RPC `https://rpc.testnet.chain.robinhood.com`, explorer `https://explorer.testnet.chain.robinhood.com`. Set `CHAIN_ID=46630`, `RPC_URL`, `USE_MOCKS=false`, then `pnpm deploy:testnet`. Defaults use the testnet faucet stock tokens and USDG (addresses in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#11-robinhood-chain-notes)).
+Chain id 46630, RPC `https://rpc.testnet.chain.robinhood.com`, explorer `https://explorer.testnet.chain.robinhood.com`. Set `CHAIN_ID=46630`, `RPC_URL`, `USE_MOCKS=false`, then `pnpm deploy:testnet`. Defaults use the testnet faucet stock tokens and USDG (addresses in [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)).

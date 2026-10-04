@@ -13,6 +13,7 @@
     "keeper": "pnpm --filter @hapax/keeper start",
     "market": "pnpm --filter @hapax/market start",
     "agent": "pnpm --filter @hapax/agent start",
+    "sim": "pnpm --filter @hapax/sim start",
     "web": "pnpm --filter @hapax/web dev",
     "typecheck": "pnpm -r typecheck"
   }
