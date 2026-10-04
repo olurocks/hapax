@@ -20,10 +20,14 @@ interface IRiskChecks {
 /// @notice Per-borrower smart account that holds borrowed USDG and the stock tokens bought with it.
 /// Funds can only move through the paths below; every state-increasing action is risk-checked fresh.
 ///
-///   owner : borrow, repay, deposit, trade, withdrawSurplus, setAgent, revokeAgent
+///   owner : borrow, repay, deposit, trade, withdrawSurplus, setAgent, revokeAgent (cash out via RiskManager)
 ///   agent : trade within its mandate, repay. An AI agent gets buying power, never keys: it cannot borrow,
 ///           withdraw, change its own mandate, or move funds anywhere except allowlisted venues.
-///   risk  : forceSell, forceRepay, pay (keeper tip) during deleverage and settlement
+///   anyone: deposit, repayFrom (repay debt with their own USDG)
+///   risk  : forceSell, forceRepay, pay (keeper tip), release (cash out) during deleverage, settlement, cash out
+///
+/// `contributed` and `distributed` count USDG that crossed the facility boundary from and to outside wallets
+/// (borrowing is not counted: it adds equal assets and debt). Owner P&L = assets - debt - contributed + distributed.
 ///
 /// Deployed as an ERC-1167 clone by FacilityFactory.
 contract CreditFacility is ReentrancyGuard {
@@ -46,6 +50,11 @@ contract CreditFacility is ReentrancyGuard {
     address[] internal _mandateTokens;
     mapping(address token => bool) public agentMayBuy;
 
+    /// @notice USDG paid in from outside (deposits and repayments from a wallet), base units.
+    uint256 public contributed;
+    /// @notice USDG paid out to the owner (withdrawals and cash-outs), base units.
+    uint256 public distributed;
+
     event AgentSet(address indexed agent, uint64 expiresAt, uint256 maxPositionUsd, address[] tokens);
     event AgentRevoked(address indexed agent);
     event Borrowed(uint256 amount);
@@ -61,6 +70,7 @@ contract CreditFacility is ReentrancyGuard {
         uint256 amountOut
     );
     event ForceSold(address indexed token, uint256 amountIn, uint256 baseOut);
+    event CashedOut(address indexed to, uint256 amount);
 
     error AlreadyInitialized();
     error Unauthorized();
@@ -132,6 +142,7 @@ contract CreditFacility is ReentrancyGuard {
     function deposit(uint256 amount) external nonReentrant {
         IRiskChecks(risk).checkDeposit(address(this));
         base.safeTransferFrom(msg.sender, address(this), amount);
+        contributed += amount;
         emit Deposited(msg.sender, amount);
     }
 
@@ -139,7 +150,24 @@ contract CreditFacility is ReentrancyGuard {
         if (to == address(0)) revert ZeroAddress();
         IRiskChecks(risk).checkWithdraw(address(this), amount);
         base.safeTransfer(to, amount);
+        distributed += amount;
         emit Withdrawn(to, amount);
+    }
+
+    // ---------------------------------------------------------------- anyone
+
+    /// @notice Repay debt with the caller's own USDG instead of the facility's balance. Capped at the debt.
+    /// Never blocked by the facility's state: repaying only ever reduces risk.
+    function repayFrom(uint256 amount) external nonReentrant returns (uint256 paid) {
+        uint256 debt = pool.debtOf(address(this));
+        paid = amount < debt ? amount : debt;
+        if (paid == 0) return 0;
+        base.safeTransferFrom(msg.sender, address(this), paid);
+        base.forceApprove(address(pool), paid);
+        paid = pool.repay(address(this), paid);
+        base.forceApprove(address(pool), 0);
+        contributed += paid;
+        emit Repaid(msg.sender, paid);
     }
 
     // ---------------------------------------------------------------- owner or agent
@@ -193,6 +221,20 @@ contract CreditFacility is ReentrancyGuard {
 
     function pay(address to, uint256 amount) external onlyRisk nonReentrant {
         base.safeTransfer(to, amount);
+    }
+
+    /// @notice Final step of a cash-out: the agent loses its rights and every USDG left goes to `to`.
+    function release(address to) external onlyRisk nonReentrant returns (uint256 amount) {
+        if (agent != address(0)) {
+            emit AgentRevoked(agent);
+            _clearMandateTokens();
+            agent = address(0);
+            delete _mandate;
+        }
+        amount = base.balanceOf(address(this));
+        if (amount > 0) base.safeTransfer(to, amount);
+        distributed += amount;
+        emit CashedOut(to, amount);
     }
 
     // ---------------------------------------------------------------- views

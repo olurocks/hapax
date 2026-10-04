@@ -100,6 +100,7 @@ contract RiskManager is Ownable, ReentrancyGuard {
         address indexed facility, address indexed caller, uint256 proceeds, uint256 repaid, uint256 tip, uint256 residual
     );
     event SettlementConfirmed(address indexed facility, uint256 amount, bytes32 evidenceHash, uint256 loss);
+    event CashedOut(address indexed facility, address indexed to, uint256 proceeds, uint256 repaid, uint256 paidOut);
 
     error InvalidParams();
     error FactoryAlreadySet();
@@ -116,6 +117,9 @@ contract RiskManager is Ownable, ReentrancyGuard {
     error NotBroker();
     error NotDefaulted();
     error TooManyTokens();
+    error NotFacilityOwner();
+    error DebtRemains(uint256 residual);
+    error ZeroAddress();
 
     constructor(
         address owner_,
@@ -287,6 +291,28 @@ contract RiskManager is Ownable, ReentrancyGuard {
         }
         r.level = Level.HEALTHY;
         emit Deleveraged(facility, msg.sender, proceeds, repaid, tip, residual);
+        _poke(facility);
+    }
+
+    // ================================================================ owner exit
+
+    /// @notice Close out a facility in one call: sell every holding at oracle-bounded prices, repay all debt,
+    /// revoke the agent and send the remaining USDG to `to`. Reverts with `DebtRemains` if the sale does not
+    /// cover the debt; repay the difference with `CreditFacility.repayFrom` first.
+    function cashOut(address facility, address to) external nonReentrant returns (uint256 paidOut) {
+        if (!factory.isFacility(facility)) revert NotFacility();
+        if (msg.sender != CreditFacility(facility).owner()) revert NotFacilityOwner();
+        if (to == address(0)) revert ZeroAddress();
+        State s = _evaluate(facility).state;
+        if (s == State.DEFAULT || s == State.CLOSED) revert StateNotAllowed(s);
+
+        uint256 proceeds = _flatten(facility);
+        uint256 repaid = CreditFacility(facility).forceRepay();
+        uint256 residual = pool.debtOf(facility);
+        if (residual > 0) revert DebtRemains(residual);
+
+        paidOut = CreditFacility(facility).release(to);
+        emit CashedOut(facility, to, proceeds, repaid, paidOut);
         _poke(facility);
     }
 

@@ -4,7 +4,7 @@
 
 - RPC: `https://rpc.testnet.chain.robinhood.com`
 - Explorer: `https://explorer.testnet.chain.robinhood.com`
-- Deployed: 2026-10-04. All contracts verified on Blockscout (source links below).
+- Deployed: 2026-10-04 (redeployed with `repayFrom`, `cashOut` and the P&L counters). All 17 contracts verified on Blockscout.
 - Admin / demo operator: `0xef004915965f882F739C17ac68fb3A0F031074Ca`
 - Broker signer: `0x35Ba6B4224Bd7fdA5117e9e12Cf9dB2b9b1F4D19`
 
@@ -23,30 +23,30 @@ For reference, the real Robinhood Chain testnet token addresses (usable with `US
 
 | Token | Address |
 |---|---|
-| USDG (mock, 6 dec) | `0xcC4fC05Ef9DBFC4f9E8D02a24fC68d4Cbc9139d0` |
-| TSLA (mock, 18 dec) | `0x616d62330f103d1E58Bf2eb96D85f113ac642A50` |
-| AMZN (mock, 18 dec) | `0x29dc522bEC2D58DEA4CF90D19c6275d9172E68df` |
-| NFLX (mock, 18 dec) | `0x53d9955B4090447161230ce4B02bB85Cb629bDD1` |
+| USDG (mock, 6 dec) | `0x515299bDa81aEFf9112d9d3116a77B377D69E372` |
+| TSLA (mock, 18 dec) | `0xC9985BF3005F53Fd4b51419eE16d97A4f4A52aB0` |
+| AMZN (mock, 18 dec) | `0x61dd7b1c4B3CF33c50990fa632e875A0E31e6Fd0` |
+| NFLX (mock, 18 dec) | `0xd7F300b64e1c046e4839D2d250431695D9721Ca7` |
 
 ### Core contracts
 
 | Contract | Address |
 |---|---|
-| MarketOracle | `0x0406dd751333b36ee285D47a76234c115D21846E` |
-| CollateralRegistry | `0x8174653734eE0823A07675fc9F2be2d0F0BE385A` |
-| LiquidityPool | `0x44e5a9D97C2a7552d7758a427F4eA46a43339347` |
-| RiskManager | `0x8d4EDBe23414829F6C3DF5b3d48ED38DEB159A70` |
-| FacilityFactory | `0x337910Ec28C517eDF350Ec87E34D987f30A7bB90` |
-| CreditFacility (clone implementation) | `0xA70B0729A852aCFA6133dD37dE50c0d8C0f1f385` |
-| DemoVenue | `0x34cA6C2Ce7f5e2542F8C3F602f36E2A0b68fE1e3` |
+| MarketOracle | `0xCbbD916cf7946Ed3681616367bDCC8c3A840E714` |
+| CollateralRegistry | `0x73A873673e23d5d5a185B63a6F0216a61480b538` |
+| LiquidityPool | `0x927299E3eFfef156430e469849ef33FC00D46395` |
+| RiskManager | `0x4056a6BDc2F84aF5FF97f0c5F524345aBea9B2C0` |
+| FacilityFactory | `0xb390a4e241Ac11ED2C553943e978673374a8d316` |
+| CreditFacility (clone implementation) | `0xc7ac304a555ae5859F2D681de3Db347B8ECC34cc` |
+| DemoVenue | `0x9c00a617f3F0D38b74A16a7af30CBaB61c1cB43D` |
 
 ### Demo price feeds (operator-controlled `DemoFeed`, 8 decimals)
 
 | Asset | Reference feed | Live feed |
 |---|---|---|
-| TSLA | `0x7ED7b2FEB6f12e39168b40F64AE44458add619Bc` | `0x0D803bCEA5C909fe92bf44433a3452bff3D21511` |
-| AMZN | `0x5698147fA121903E7a2f74b9d58A7D01d1D07dDc` | `0x5D06De3669F2E4dF7C1e8253a3cA3055952A1436` |
-| NFLX | `0x3A1DeC020052B5aB309AFd45AAc2D20D5A7fC2e8` | `0xb7FdaFBcE612D303EB29C79925f759bcBED94b5D` |
+| TSLA | `0x67b08E682803FaA624d863cB926f2Ec342602f8E` | `0x8468716BB84842aEE73Ab3D0cFe781127ADca74e` |
+| AMZN | `0xcf5789484b0ECC5c4B4BA005aAa61F86F9197A52` | `0x06fC3CF29072dF5F5F76D5eBf53B1Ad56E186315` |
+| NFLX | `0xD533B6e268a55e8925705D54319bDf38D1c41a56` | `0x35Fa63b47584e596470905Ed0B953A11a245F68b` |
 
 ### Initial liquidity (seeded at deploy)
 

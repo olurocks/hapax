@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./env": "./src/env.ts",
-    "./http": "./src/http.ts"
+    "./http": "./src/http.ts",
+    "./verify": "./src/verify.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."

@@ -38,8 +38,9 @@ flowchart LR
     K["Keeper<br/>poke, deleverage"]
     AG["AI agent (Claude)<br/>trades within its mandate"]
     M["Market operator<br/>drives demo feeds"]
+    C["Control plane<br/>demo variables"]
     S["Sim<br/>broker-margin vs Hapax"]
-    UI["Web dashboard"]
+    UI["Web app"]
   end
   subgraph ON["Onchain (Robinhood Chain)"]
     R["CollateralRegistry"]
@@ -62,6 +63,11 @@ flowchart LR
   AG -->|execute only| F
   M -->|set prices| O
   UI -->|transactions| F
+  UI -->|sign-in + consent| B
+  UI -->|hire, signed instructions| AG
+  C -->|admin| B
+  C -->|admin| M
+  C -->|admin| AG
 ```
 
 **Design rules.** (1) Every state-increasing action calls `RiskManager.evaluate` and checks attestation status at action time — freeze is instantaneous; the keeper only persists state for UX and timers. (2) The keeper supplies no calldata; forced reduction sells through the default venue with oracle-bounded slippage. (3) Adapters are typed (`swap(tokenIn, tokenOut, amountIn, minOut)`); the facility measures its own balance deltas rather than trusting the adapter's return. (4) Pausing never blocks repay or reduce. (5) Collateral is valued in shares — the broker attests *what you hold*, the chain decides *what it is worth now*.
@@ -142,22 +148,23 @@ stateDiagram-v2
 ## 5. Onchain components
 
 - **CollateralRegistry** — verifies and stores EIP-712 holdings attestations (domain `Hapax` v1, chainId, verifyingContract). Accepts only an approved broker signer, strictly increasing nonce, future expiry, bounded TTL, borrower = facility owner, every asset registered in the oracle, ≤ 8 positions. `revoke(facility, reason)`; expiry is the dead-man switch.
-- **FacilityFactory / CreditFacility** — the factory deploys ERC-1167 clones (one per borrower) and keeps the list the keeper iterates. The facility holds USDG and stock tokens; debt lives in the pool, keyed by facility address. Owner: `borrow`, `repay`, `deposit`, `trade`, `withdrawSurplus`, `setAgent`, `revokeAgent`. Agent: `trade`, `repay`. RiskManager only: `forceSell`, `forceRepay`, `pay`.
+- **FacilityFactory / CreditFacility** — the factory deploys ERC-1167 clones (one per borrower) and keeps the list the keeper iterates. The facility holds USDG and stock tokens; debt lives in the pool, keyed by facility address. Owner: `borrow`, `repay`, `deposit`, `trade`, `withdrawSurplus`, `setAgent`, `revokeAgent`. Agent: `trade`, `repay`. Anyone: `deposit`, `repayFrom` (repay with their own USDG; never blocked by state). RiskManager only: `forceSell`, `forceRepay`, `pay`, `release`. `contributed` / `distributed` count USDG crossing the facility boundary from and to wallets, so owner P&L = assets − debt − contributed + distributed.
 - **MarketOracle** — per asset: ref/live feeds (AggregatorV3), heartbeats, max deviation, open/weekend haircuts. `quote(asset) → (mark, live, session, degraded)`. USDG is $1. Mainnet adds a USDG/USD feed with a depeg guard and an L2 sequencer-uptime check.
 - **LiquidityPool** — USDG only; `supply`/`withdraw` for the lender, `borrow`/`repay` for facilities, a fixed-APR interest index within hard bounds, `absorbLoss`. Accounting identity holds after every action.
-- **RiskManager** — owns bounded policy/risk parameters. `evaluate` (view, used by every action and the keeper), `poke` (permissionless, idempotent, persists state and timers), `deleverage` (permissionless when allowed), `confirmSettlement` (broker), `absorbLoss` routing.
+- **RiskManager** — owns bounded policy/risk parameters. `evaluate` (view, used by every action and the keeper), `poke` (permissionless, idempotent, persists state and timers), `deleverage` (permissionless when allowed), `cashOut` (owner: flatten, repay, revoke the agent and send the rest to the owner in one call; reverts with `DebtRemains` if the sale doesn't cover the debt), `confirmSettlement` (broker), `absorbLoss` routing.
 - **Venue adapter** — `DemoVenue`: inventory-based, quotes at `P_live` with a fixed spread, funded by the operator. A Uniswap v3 adapter is a documented extension.
 
 ## 6. Offchain components
 
 | Component | Port | Responsibility |
 |---|---|---|
-| **Broker simulator** | 8787 | Mock brokerage accounts; signs holdings attestations on a timer. Operator API: revoke, encumber, holdings, settle. |
+| **Broker simulator** | 8787 | Brokerage customers and an OAuth-style sign-in + consent flow (`/oauth/authorize`) that links an account to a facility; re-signs holdings attestations on a timer; owner-signed disconnect once debt is repaid. One account backs one facility at a time; the custody ref is fixed for a facility's life. Admin routes (`/admin/*`): customers, encumber, revoke, silence, reinstate, settle. |
 | **Keeper** | — | Each block: evaluate facilities, `poke` on state change, `deleverage` when allowed. Permissionless; anyone can run one. |
-| **Market operator** | 8788 | Drives the demo feeds: close the session (backdate the reference past its heartbeat), shock a price, reopen. |
-| **Agent** | 8789 | Holds the facility's agent key. Each tick: reads facility + market state, asks Claude (`claude-opus-5-5`, structured output) for trades given the owner's plain-English instructions, simulates, submits, logs onchain refusals by error name. Falls back to a deterministic rules strategy with no API key or on error. |
+| **Market operator** | 8788 | Drives the demo feeds (admin routes only): close the session (backdate the reference past its heartbeat), shock a price, reopen. Resumes from onchain prices on restart. |
+| **Agent** | 8789 | A catalog of agents (Claude Discretionary on `claude-opus-5-5` with structured output; Dip Buyer and Momentum rules strategies). Hiring derives a dedicated key per (agent, facility), which the owner appoints onchain with `setAgent`; instructions are owner-signed (personal_sign) and verified against the facility owner. A treasury key tops up each agent key's gas. Each cycle, for every running facility: read state, decide, simulate, submit, log onchain refusals by error name. |
 | **Sim** | 8790 | Pure, chain-free weekend-gap simulation: broker-only margin (acts at Monday's open) vs Hapax (deleverages when the live mark first breaches a threshold), with lender loss for each. `GET /sim`, `POST /sim` to override the scenario. |
-| **Web dashboard** | 5173 | Buying power, session badge, U/H gauges, state timeline, mandate panel, agent decision feed with onchain refusals, demo console. Vite + React + viem/wagmi. |
+| **Control** | 8791 | Demo control plane, localhost only: seeds brokerage customers, funds wallets (faucet), moves the market, makes the broker revoke/settle, forces agent decisions, advances Anvil time. Calls the other services' `/admin/*` routes with `ADMIN_TOKEN`. CLI: `pnpm demo`. |
+| **Web app** | 5173 | The product, with no demo controls: browser-wallet connect (EIP-6963), open accounts, connect the brokerage through the broker's consent page, borrow / repay (from account cash or wallet) / add funds / withdraw profits, sell positions, close out, hire and manage an agent, monitor risk and activity. Vite + React + viem. |
 
 ## 7. Trust boundaries (real vs simulated)
 
@@ -165,11 +172,11 @@ stateDiagram-v2
 |---|---|
 | EIP-712 attestations: verification, expiry, nonces, revocation | The broker — a service we run that signs attestations |
 | Facility smart account and per-action policy checks | Legal enforceability of the pledge |
-| Session-aware oracle (reference vs live, OPEN/CLOSED, DEGRADED) | **Price feeds** are operator-controlled demo feeds — even on testnet, because Robinhood's testnet stock feeds are themselves mocks; this makes the crash scene repeatable (badged in the UI) |
+| Session-aware oracle (reference vs live, OPEN/CLOSED, DEGRADED) | **Price feeds** are operator-controlled demo feeds — even on testnet, because Robinhood's testnet stock feeds are themselves mocks; this makes the crash scene repeatable; driven only from the control plane |
 | Exposure-based credit and the agent mandate, enforced onchain | **Tokens on the live deploy are mock ERC-20s**: the faucet caps at ~5 shares and USDG is not mintable by us, below the ~$1M the demo needs. Same symbols/decimals/wiring; real addresses in [DEPLOYMENTS.md](DEPLOYMENTS.md) |
 | Two-signal risk engine, state machine, permissionless deleverage | Broker-side sale of shares on default (event + stub settlement) |
 | AI agent trading through the mandate (Claude, rules fallback) | Venue liquidity: one demo venue priced off the live feed |
-| Keeper, broker, market, sim services; dashboard | Lender liquidity: one pool, test funds |
+| Keeper, broker, market, agent, sim services; user app | Lender liquidity: one pool, test funds |
 | Contracts deployed and **verified** on Robinhood Chain testnet | |
 
 ## 8. Open production problems
@@ -195,20 +202,21 @@ stateDiagram-v2
 
 ## 10. Testing
 
-31 deterministic scenario tests (`contracts/test/Scenarios.t.sol`), one per demo scene and guardrail: revoke → frozen in the same block; stale attestation → frozen; Friday close shrinks the limit and buying power with no transaction; Saturday crash → deleverage → cure → default → settlement, including a pool-absorbed shortfall; weekend pump does not raise the limit; exposure-based buying power and initial margin on buys; the full agent mandate (token list, position cap, no keys, sells always allowed, kill switch, expiry); policy blocks an unlisted adapter and withdrawal of borrowed funds; attestation replay, unknown signer, borrower mismatch; the full demo storyline. Invariants the suite encodes: debt never exceeds the limit at borrow; no risk-adding action in MARGIN_CALL or worse; assets leave only via repay / swap / surplus withdrawal / tip / settlement; pool accounting identity holds; nonces strictly increase; closed-session mark never exceeds the last reference; `poke` is idempotent; forced reduction never executes worse than the slippage bound. Stateful invariant fuzzing is the natural next step and is not yet written.
+40 deterministic tests. `contracts/test/Lifecycle.t.sol` covers the owner's exit paths: repay from a wallet (capped, by anyone, while frozen), profit withdrawal and P&L accounting, one-call cash-out (owner only, revokes the agent, `DebtRemains` on a shortfall, blocked in default). `contracts/test/Scenarios.t.sol` has one test per demo scene and guardrail: revoke → frozen in the same block; stale attestation → frozen; Friday close shrinks the limit and buying power with no transaction; Saturday crash → deleverage → cure → default → settlement, including a pool-absorbed shortfall; weekend pump does not raise the limit; exposure-based buying power and initial margin on buys; the full agent mandate (token list, position cap, no keys, sells always allowed, kill switch, expiry); policy blocks an unlisted adapter and withdrawal of borrowed funds; attestation replay, unknown signer, borrower mismatch; the full demo storyline. Invariants the suite encodes: debt never exceeds the limit at borrow; no risk-adding action in MARGIN_CALL or worse; assets leave only via repay / swap / surplus withdrawal / tip / settlement; pool accounting identity holds; nonces strictly increase; closed-session mark never exceeds the last reference; `poke` is idempotent; forced reduction never executes worse than the slippage bound. Stateful invariant fuzzing is the natural next step and is not yet written. `pnpm smoke` runs the full user journey against the live services on Anvil (sign-in and consent, borrow, hire, refused trades, profit withdrawal, repay from wallet, close out, disconnect, revoke).
 
 ## 11. Repository layout
 
 ```
 contracts/  Foundry: oracle, registry, pool, risk manager, factory, facility, demo venue/feeds, mocks
 shared/     Chain config, generated ABIs, EIP-712 types (used by every TS package)
-broker/     Broker simulator (attestation signer + operator API)
+broker/     Broker simulator: sign-in + consent pages, attestation signer, admin API
 keeper/     Block loop: evaluate, poke, deleverage
-market/     Demo market operator: open/close the session, move prices
-agent/      AI agent: Claude turns instructions into trades through the agent key
+market/     Demo market operator: open/close the session, move prices (admin API)
+agent/      Agent catalog; per-facility keys; Claude or rules strategies trade through the mandate
+control/    Demo control plane (HTTP, localhost) and the `pnpm demo` CLI; `pnpm smoke` end-to-end test
 sim/        Weekend-gap simulation endpoint: broker-only margin vs Hapax
-web/        Dashboard and demo console
+web/        The user app
 docs/       This write-up and live deployment addresses
 ```
 
-Toolchain: Solidity 0.8.24, Foundry, OpenZeppelin 5, viem/wagmi, Node 20+, pnpm workspaces. Deployed addresses and the mock-token disclosure: [DEPLOYMENTS.md](DEPLOYMENTS.md).
+Toolchain: Solidity 0.8.24, Foundry, OpenZeppelin 5, viem, Node 20+, pnpm workspaces. Deployed addresses and the mock-token disclosure: [DEPLOYMENTS.md](DEPLOYMENTS.md).

@@ -5,6 +5,9 @@ const n = (x: bigint, decimals = 18) => Number(x) / 10 ** decimals;
 
 export const usd = (wad: bigint, digits = 0) =>
   "$" + n(wad).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+/** Signed USD from 1e18; `plus` adds "+" to gains (for P&L). */
+export const signedUsd = (wad: bigint, plus = false) =>
+  (wad < 0n ? "−" : plus && wad > 0n ? "+" : "") + usd(wad < 0n ? -wad : wad);
 export const usdUnits = (units: bigint, decimals = 6) =>
   "$" + n(units, decimals).toLocaleString("en-US", { maximumFractionDigits: 0 });
 export const price = (wad: bigint) =>

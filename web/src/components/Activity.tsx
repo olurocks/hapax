@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { STATES, SYMBOLS, type Deployment } from "@hapax/shared";
 import type { ChainEvent } from "../lib/chain";
-import type { AgentDecision } from "../lib/services";
+import type { AgentDecision } from "@hapax/shared";
 import { etTime, pct, short, stateLabel, usd, usdUnits } from "../lib/format";
 
 type Kind = "ref" | "fill" | "hold" | "risk" | "mkt" | "owner";
@@ -52,7 +52,6 @@ export function Activity({ events, decisions, agent, deployment }: Props) {
           text:
             `${stateLabel[STATES[a.from]]} → ${stateLabel[STATES[a.to]]}. ` +
             (a.H > 10n ** 30n ? "No debt left." : `Position health ${pct(a.H)}, credit used ${pct(a.U)}.`),
-          code: "recorded by the keeper",
         });
         break;
       case "Deleveraged":
@@ -67,7 +66,7 @@ export function Activity({ events, decisions, agent, deployment }: Props) {
         items.push({ ...base, kind: "risk", text: `Cure period started. Repay ${usdUnits(a.residualDebt)} by ${etTime(a.deadline)}.` });
         break;
       case "Cured":
-        items.push({ ...base, kind: "owner", text: "Remaining debt repaid. The facility is back to normal." });
+        items.push({ ...base, kind: "owner", text: "Remaining debt repaid. Your account is back to normal." });
         break;
       case "Defaulted":
         items.push({ ...base, kind: "risk", text: `Default. Debt outstanding ${usdUnits(a.debt / 10n ** 12n)}.` });
@@ -79,20 +78,38 @@ export function Activity({ events, decisions, agent, deployment }: Props) {
         items.push({
           ...base,
           kind: "mkt",
-          text: `Broker settled ${usdUnits(a.amount)}. Loss to lenders ${usdUnits(a.loss)}. Facility closed.`,
+          text: `Broker settled ${usdUnits(a.amount)} from pledged shares. Account closed.`,
         });
         break;
       case "FreezeStarted":
-        items.push({ ...base, kind: "risk", text: "Facility frozen. Only selling and repaying are allowed." });
+        items.push({ ...base, kind: "risk", text: "Account frozen. Only selling and repaying are allowed." });
         break;
       case "AttestationRevoked":
-        items.push({ ...base, kind: "mkt", text: "Broker revoked the holdings attestation. Effective in the same block." });
+        items.push({
+          ...base,
+          kind: "mkt",
+          text: Number(a.reasonCode) === 2 ? "You disconnected your brokerage account." : "Your broker stopped vouching for your holdings. The account froze in the same block.",
+        });
+        break;
+      case "CashedOut":
+        if (a.proceeds === undefined) break; // the facility's own event; the risk engine's carries the breakdown
+        items.push({
+          ...base,
+          kind: "owner",
+          text: `Closed out: sold positions for ${usdUnits(a.proceeds)}, repaid ${usdUnits(a.repaid)}, sent ${usdUnits(a.paidOut)} to your wallet.`,
+        });
+        break;
+      case "Deposited":
+        items.push({ ...base, kind: "owner", text: `Added ${usdUnits(a.amount)} USDG from your wallet.` });
+        break;
+      case "Withdrawn":
+        items.push({ ...base, kind: "owner", text: `Withdrew ${usdUnits(a.amount)} USDG to your wallet.` });
         break;
       case "Borrowed":
-        items.push({ ...base, kind: "owner", text: `Borrowed ${usdUnits(a.amount)} USDG into the facility.` });
+        items.push({ ...base, kind: "owner", text: `Borrowed ${usdUnits(a.amount)} USDG into your account.` });
         break;
       case "Repaid":
-        if (String(a.by).toLowerCase() === deployment.risk.toLowerCase()) break; // shown as part of Deleveraged
+        if (String(a.by).toLowerCase() === deployment.risk.toLowerCase()) break; // shown as part of Deleveraged / CashedOut
         if (ev.tx && reported.has(ev.tx.toLowerCase())) break;
         items.push({
           ...base,
@@ -118,18 +135,18 @@ export function Activity({ events, decisions, agent, deployment }: Props) {
         items.push({
           ...base,
           kind: "owner",
-          text: `Appointed agent ${short(a.agent)}: may buy ${(a.tokens as string[]).map(symbolOf).join(", ") || "nothing"}, up to ${usd(a.maxPositionUsd)} per position, until ${etTime(a.expiresAt)}.`,
+          text: `Agent ${short(a.agent)} appointed: may buy ${(a.tokens as string[]).map(symbolOf).join(", ") || "nothing"}, up to ${usd(a.maxPositionUsd)} per position, until ${etTime(a.expiresAt)} ET.`,
         });
         break;
       case "AgentRevoked":
-        items.push({ ...base, kind: "owner", text: `Revoked agent ${short(a.agent)}. It has no rights left.` });
+        items.push({ ...base, kind: "owner", text: `Agent ${short(a.agent)} stopped. It has no rights left.` });
         break;
     }
   }
 
   for (const [i, d] of decisions.entries()) {
     const time = Math.floor(Date.parse(d.at) / 1000);
-    const by = d.source === "manual" ? "Console" : d.source === "claude" ? "Claude" : "Rules";
+    const by = d.source === "claude" ? "Claude" : "The agent";
     if (d.trades.length === 0) {
       items.push({ key: `d${i}`, time, kind: "hold", text: `${by} decided not to trade.`, quote: d.reasoning });
       continue;
@@ -149,13 +166,13 @@ export function Activity({ events, decisions, agent, deployment }: Props) {
               ? `Agent tried to ${t.action} ${what}.`
               : `Agent skipped: ${t.detail}.`,
         code: t.status === "refused" ? t.detail.replace(/^contract refused: /, "") : t.tx ? `tx ${short(t.tx)}` : undefined,
-        quote: j === 0 && d.source !== "manual" ? d.reasoning : undefined,
+        quote: j === 0 && d.source !== "operator" ? d.reasoning : undefined,
       });
     });
   }
 
   items.sort((x, y) => y.time - x.time || y.key.localeCompare(x.key));
-  if (!items.length) return <p className="empty">No activity yet. Borrow, appoint an agent, and let it run.</p>;
+  if (!items.length) return <p className="empty">No activity yet.</p>;
 
   return (
     <ol className="feed">

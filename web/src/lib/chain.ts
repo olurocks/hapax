@@ -1,16 +1,13 @@
 import {
   BaseError,
   ContractFunctionRevertedError,
+  UserRejectedRequestError,
   createPublicClient,
-  createWalletClient,
-  custom,
   http,
   type Abi,
   type Address,
   type Hex,
-  type WalletClient,
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import {
   SYMBOLS,
   chainFor,
@@ -76,7 +73,7 @@ export const readParams = () =>
 
 export async function readSnapshot(f: Address) {
   const d = deployment!;
-  const [block, e, rec, buyingPower, canDeleverage, mandate, owner, agent, idle, attStatus, att, positions] =
+  const [block, e, rec, buyingPower, canDeleverage, mandate, owner, agent, idle, attStatus, att, positions, contributed, distributed] =
     await Promise.all([
       publicClient.getBlock(),
       publicClient.readContract({ address: d.risk, abi: riskManagerAbi, functionName: "evaluate", args: [f] }),
@@ -90,6 +87,9 @@ export async function readSnapshot(f: Address) {
       publicClient.readContract({ address: d.registry, abi: collateralRegistryAbi, functionName: "status", args: [f] }),
       publicClient.readContract({ address: d.registry, abi: collateralRegistryAbi, functionName: "record", args: [f] }),
       publicClient.readContract({ address: d.registry, abi: collateralRegistryAbi, functionName: "positions", args: [f] }),
+      // Facilities from deployments that predate the P&L counters don't have them; read as null, not a failure.
+      publicClient.readContract({ address: f, abi: creditFacilityAbi, functionName: "contributed" }).catch(() => null),
+      publicClient.readContract({ address: f, abi: creditFacilityAbi, functionName: "distributed" }).catch(() => null),
     ]);
 
   const stocks: StockView[] = await Promise.all(
@@ -139,6 +139,10 @@ export async function readSnapshot(f: Address) {
     canDeleverage,
     idle,
     stocks,
+    /** USDG paid in from / out to wallets, base units (6 dec). */
+    flows: { contributed: contributed ?? 0n, distributed: distributed ?? 0n },
+    /** False on facilities deployed before repayFrom / cashOut / the P&L counters existed. */
+    current: contributed !== null && distributed !== null,
     collateral: {
       status: attStatus,
       broker: att.broker,
@@ -152,19 +156,33 @@ export async function readSnapshot(f: Address) {
 }
 export type Snapshot = Awaited<ReturnType<typeof readSnapshot>>;
 
-export async function facilitiesFor(owner?: Address) {
-  const d = deployment!;
-  if (owner) {
-    const mine = await publicClient.readContract({
-      address: d.factory,
-      abi: facilityFactoryAbi,
-      functionName: "facilitiesOf",
-      args: [owner],
-    });
-    if (mine.length) return mine;
-  }
-  return publicClient.readContract({ address: d.factory, abi: facilityFactoryAbi, functionName: "facilities" });
+/** The connected wallet's own facilities only. No wallet → empty (don't browse other accounts). */
+export async function facilitiesFor(owner?: Address): Promise<readonly Address[]> {
+  if (!owner) return [];
+  return publicClient.readContract({
+    address: deployment!.factory,
+    abi: facilityFactoryAbi,
+    functionName: "facilitiesOf",
+    args: [owner],
+  });
 }
+
+export const readPoolApr = () =>
+  publicClient.readContract({ address: deployment!.pool, abi: liquidityPoolAbi, functionName: "aprBps" });
+
+/** Gas and USDG in the user's own wallet, and how much USDG the facility may pull from it. */
+export async function readWalletBalances(owner: Address, facility: Address | null) {
+  const d = deployment!;
+  const [eth, usdg, allowance] = await Promise.all([
+    publicClient.getBalance({ address: owner }),
+    publicClient.readContract({ address: d.usdg, abi: mockERC20Abi, functionName: "balanceOf", args: [owner] }),
+    facility
+      ? publicClient.readContract({ address: d.usdg, abi: mockERC20Abi, functionName: "allowance", args: [owner, facility] })
+      : Promise.resolve(0n),
+  ]);
+  return { eth, usdg, allowance };
+}
+export type WalletBalances = Awaited<ReturnType<typeof readWalletBalances>>;
 
 // ------------------------------------------------------------------ events
 
@@ -274,60 +292,53 @@ export function sortPrices(pts: PricePoint[]) {
   });
 }
 
-// ------------------------------------------------------------------ wallet
+// ------------------------------------------------------------------ transactions
 
-declare global {
-  interface Window {
-    ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> };
-  }
-}
-
-export interface Wallet {
-  client: WalletClient;
+export type TxStage = "wallet" | "pending";
+export interface Call {
   address: Address;
-  kind: "browser" | "dev key";
+  abi: Abi;
+  functionName: string;
+  args?: readonly unknown[];
 }
 
-/** Browser wallet if present; otherwise a local dev key (Anvil only, never a real key). */
-export async function connectWallet(): Promise<Wallet> {
-  if (window.ethereum) {
-    const client = createWalletClient({ chain, transport: custom(window.ethereum) });
-    const [address] = await client.requestAddresses();
-    try {
-      await client.switchChain({ id: chain.id });
-    } catch {
-      await client.addChain({ chain });
-    }
-    return { client, address, kind: "browser" };
-  }
-  const pk = import.meta.env.VITE_DEV_OWNER_PK as Hex | undefined;
-  if (!pk) throw new Error("No browser wallet found. Install one, or set VITE_DEV_OWNER_PK for a local Anvil demo.");
-  const account = privateKeyToAccount(pk);
-  return { client: createWalletClient({ account, chain, transport: http(rpcUrl) }), address: account.address, kind: "dev key" };
-}
-
-/** Simulate, send and wait. Throws an Error whose message is the decoded revert reason. */
+/**
+ * Simulate (so reverts surface with their decoded reason before the wallet opens), ask the wallet to sign,
+ * then wait for the receipt. `onStage` drives the progress UI.
+ */
 export async function send(
-  wallet: Wallet,
-  call: { address: Address; abi: Abi; functionName: string; args?: readonly unknown[] },
+  client: import("viem").WalletClient,
+  account: Address,
+  call: Call,
+  onStage?: (stage: TxStage, hash?: Hex) => void,
 ) {
   try {
-    const { request } = await publicClient.simulateContract({ ...call, account: wallet.address } as never);
-    const hash = await wallet.client.writeContract({ ...(request as object), account: wallet.client.account ?? wallet.address } as never);
-    await publicClient.waitForTransactionReceipt({ hash });
+    const { request } = await publicClient.simulateContract({ ...call, account } as never);
+    onStage?.("wallet");
+    const hash = await client.writeContract({ ...(request as object), account, chain } as never);
+    onStage?.("pending", hash);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") throw new Error("Transaction reverted");
     return hash;
   } catch (err) {
     throw new Error(revertReason(err));
   }
 }
 
+export const txUrl = (hash: string) => (explorer ? `${explorer}/tx/${hash}` : null);
+export const addressUrl = (a: string) => (explorer ? `${explorer}/address/${a}` : null);
+
 export function revertReason(err: unknown): string {
   if (err instanceof BaseError) {
+    if (err.walk((e) => e instanceof UserRejectedRequestError)) return "You rejected the request in your wallet.";
     const revert = err.walk((e) => e instanceof ContractFunctionRevertedError);
     if (revert instanceof ContractFunctionRevertedError) {
       return formatRevert(revert.data?.errorName ?? revert.reason ?? "reverted", revert.data?.args ?? [], deployment);
     }
+    if (/insufficient funds/i.test(err.message)) return "Not enough ETH in your wallet to pay for gas.";
     return err.shortMessage;
   }
+  const code = (err as { code?: number })?.code;
+  if (code === 4001) return "You rejected the request in your wallet.";
   return err instanceof Error ? err.message : String(err);
 }

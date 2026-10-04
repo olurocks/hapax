@@ -14,6 +14,9 @@
     "market": "pnpm --filter @hapax/market start",
     "agent": "pnpm --filter @hapax/agent start",
     "sim": "pnpm --filter @hapax/sim start",
+    "control": "pnpm --filter @hapax/control start",
+    "demo": "pnpm --filter @hapax/control --silent cli",
+    "smoke": "pnpm --filter @hapax/control smoke",
     "web": "pnpm --filter @hapax/web dev",
     "typecheck": "pnpm -r typecheck"
   }

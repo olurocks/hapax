@@ -2183,6 +2183,30 @@ export const riskManagerAbi = [
   },
   {
     "type": "function",
+    "name": "cashOut",
+    "inputs": [
+      {
+        "name": "facility",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paidOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "checkBorrow",
     "inputs": [
       {
@@ -2943,6 +2967,43 @@ export const riskManagerAbi = [
   },
   {
     "type": "event",
+    "name": "CashedOut",
+    "inputs": [
+      {
+        "name": "facility",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "proceeds",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "repaid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidOut",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "CureStarted",
     "inputs": [
       {
@@ -3366,6 +3427,17 @@ export const riskManagerAbi = [
   },
   {
     "type": "error",
+    "name": "DebtRemains",
+    "inputs": [
+      {
+        "name": "residual",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ExceedsCredit",
     "inputs": [
       {
@@ -3413,6 +3485,11 @@ export const riskManagerAbi = [
   {
     "type": "error",
     "name": "NotFacility",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotFacilityOwner",
     "inputs": []
   },
   {
@@ -3515,6 +3592,11 @@ export const riskManagerAbi = [
   {
     "type": "error",
     "name": "TooManyTokens",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
     "inputs": []
   }
 ] as const;
@@ -3762,6 +3844,19 @@ export const creditFacilityAbi = [
   },
   {
     "type": "function",
+    "name": "contributed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "deposit",
     "inputs": [
       {
@@ -3772,6 +3867,19 @@ export const creditFacilityAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "distributed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -3929,6 +4037,25 @@ export const creditFacilityAbi = [
   },
   {
     "type": "function",
+    "name": "release",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "repay",
     "inputs": [
       {
@@ -3940,6 +4067,25 @@ export const creditFacilityAbi = [
     "outputs": [
       {
         "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "repayFrom",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paid",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -4099,6 +4245,25 @@ export const creditFacilityAbi = [
     "type": "event",
     "name": "Borrowed",
     "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CashedOut",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "amount",
         "type": "uint256",

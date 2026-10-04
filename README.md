@@ -11,13 +11,13 @@ Built for Arbitrum Open House Singapore (Robinhood Chain). Full design: [docs/AR
 
 ## Real vs simulated
 
-| Real | Simulated (labelled in the UI) |
+| Real | Simulated (driven from the demo control plane, never the app) |
 |---|---|
 | EIP-712 holdings attestations, expiry, nonces, revocation | The broker (our signing service) |
 | Facility smart account and per-action policy | Legal enforceability of the pledge |
 | Session-aware oracle (reference vs live, OPEN vs CLOSED) | Price feeds on testnet (Robinhood's testnet stock feeds are mocks; ours are operator-driven demo feeds) |
 | Agent mandate (token list, position cap, expiry, kill switch), enforced onchain | |
-| AI agent trading through the mandate (Claude, with a rules fallback) | |
+| AI agents trading through the mandate (Claude, or rules strategies), each on its own derived key | Test funds for wallets (faucet) |
 | Two-signal risk engine, state machine, permissionless deleverage | Broker-side sale of shares on default |
 | USDG as the settlement currency: pool, venue quotes, repayment | Venue liquidity (demo venue priced off the live feed) |
 | Contract behaviour is identical on real or mock tokens | The live testnet deploy uses **mock** TSLA/AMZN/NFLX/USDG: the faucet caps at ~5 shares and USDG is not obtainable at scale, so a $1M pool needs mintable tokens. Real token addresses in [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md) |
@@ -26,24 +26,59 @@ Built for Arbitrum Open House Singapore (Robinhood Chain). Full design: [docs/AR
 
 ```
 contracts/   Foundry: MarketOracle, CollateralRegistry, LiquidityPool, FacilityFactory, CreditFacility, RiskManager, demo feed/venue
-shared/      Chain config, generated ABIs, EIP-712 types
-broker/      Broker simulator: signs attestations, operator API (revoke, encumber, silence, settle)
+shared/      Chain config, generated ABIs, EIP-712 types, owner-signed request format
+broker/      Broker simulator: sign-in + consent pages, holdings attestations, admin API (revoke, encumber, silence, settle)
 keeper/      Evaluates facilities, pokes state changes, deleverages
-market/      Demo market operator: open/close the session, move live prices
-agent/       AI agent: Claude turns plain-English instructions into trades through the agent key
+market/      Demo market operator: open/close the session, move live prices (admin API)
+agent/       Agent catalog (Claude, Dip Buyer, Momentum); one derived key per hired facility; trades through the mandate
+control/     Demo control plane: one local HTTP service + the `pnpm demo` CLI for every simulated variable; `pnpm smoke`
 sim/         Weekend-gap simulation endpoint: broker-only margin vs Hapax, lender loss for each
-web/         Dashboard: buying power, risk, agent mandate, activity feed with onchain refusals, demo console
-docs/        Architecture write-up and live deployment addresses
+web/         The user app
+docs/        Architecture write-up, demo walkthrough, live deployment addresses
 ```
+
+## The app
+
+`http://localhost:5173` is the product, end to end, with no demo controls:
+
+1. **Connect a browser wallet** (MetaMask, Rabby, anything that speaks EIP-6963). Wrong network → one-click switch.
+2. **Open a credit account** (your facility; open more from the account switcher).
+3. **Connect your brokerage**: the app sends you to the broker's sign-in page, you approve what Hapax may see, and you land back with a signed attestation and a credit limit.
+4. **Borrow** USDG into the account.
+5. **Hire an agent** from the catalog: choose the stocks it may buy, a per-position cap and how long the mandate lasts, write its instructions. One transaction appoints it onchain, one signature starts it. Edit instructions, change limits, renew or stop it at any time.
+6. **Watch it trade**: account value and P&L, risk gauges, live vs exchange prices, an activity feed with every fill and every onchain refusal.
+7. **Take profits**: withdraw what the account holds above its debt to your wallet; **repay** from account cash or straight from your wallet; **add funds**; **sell** a position yourself; or **close out** in one transaction (sell everything, repay, stop the agent, send the rest to your wallet).
+8. **Disconnect your brokerage** once nothing is owed.
+
+## Demo control plane
+
+Everything Hapax simulates (the brokerage's customers, the price feeds, the broker's decisions, test funds, the clock) is set from `control/`, never from the app. It listens on localhost and calls the other services' `/admin/*` routes with `ADMIN_TOKEN`.
+
+```bash
+pnpm demo help
+pnpm demo seed alex 2468 TSLA=1000 AMZN=500 cash=50000 holder="Alex Rivera"   # a brokerage customer to sign in as
+pnpm demo faucet 0xYOUR_WALLET usdg=100000 eth=1                             # gas + USDG for repaying from the wallet
+pnpm demo liquidity 1000000          # the lender supplies more USDG to the pool
+pnpm demo close                      # Friday 4pm: reference feeds stop, buying power shrinks
+pnpm demo shock TSLA -16             # weekend crash: the keeper deleverages
+pnpm demo try buy AMZN 10000         # force an agent trade outside its mandate: reverts OutsideMandate
+pnpm demo tick                       # force one agent decision now
+pnpm demo revoke                     # broker revokes: the account freezes in the same block
+pnpm demo settle                     # broker settles a defaulted account
+pnpm demo advance 300                # jump Anvil's clock
+pnpm demo status                     # every account, state, brokerage link and agent
+```
+
+Commands that take an account default to the newest one; pass a facility address or an owner wallet to pick another. The same actions are plain HTTP on `http://127.0.0.1:8791` (see `control/src/index.ts`).
 
 ## Run locally
 
-Requires Foundry, Node 20+, pnpm.
+Requires Foundry, Node 20+, pnpm, and a browser wallet.
 
 ```bash
 pnpm install
 cp .env.example .env          # fill in keys; for Anvil use its default dev keys
-pnpm contracts:test           # 31 scenario tests, one per demo scene and guardrail
+pnpm contracts:test           # 40 tests: every demo scene and guardrail, plus the owner's exit paths
 
 anvil                          # terminal 1
 pnpm deploy:local              # writes contracts/deployments/31337.json
@@ -51,28 +86,16 @@ pnpm abis                      # regenerate shared/src/abis.ts after contract ch
 pnpm market                    # terminal 2, :8788
 pnpm broker                    # terminal 3, :8787
 pnpm keeper                    # terminal 4
-pnpm agent                     # terminal 5, :8789 (set ANTHROPIC_API_KEY for Claude; otherwise rules mode;
-                               #   AGENT_INTERVAL_MS=0 turns off autorun so the demo console drives every decision)
-pnpm sim                       # terminal 6, :8790 (GET /sim weekend-gap comparison; no chain needed)
-pnpm web                       # terminal 7, dashboard at http://localhost:5173
+pnpm agent                     # terminal 5, :8789 (ANTHROPIC_API_KEY enables the Claude agent)
+pnpm control                   # terminal 6, :8791 (demo control plane; drive it with `pnpm demo`)
+pnpm web                       # terminal 7, http://localhost:5173
+pnpm sim                       # optional, :8790 (GET /sim weekend-gap comparison; no chain needed)
+
+pnpm smoke                     # optional: the whole user journey against the running services
 ```
 
-The dashboard reads the chain directly and drives the demo services from its demo console. Owner actions use a browser wallet, or `VITE_DEV_OWNER_PK` on local Anvil.
-
-Drive the demo:
-
-```bash
-# borrower opens a facility (factory.openFacility()), then the broker attests their account
-curl -X POST localhost:8787/accounts -d '{"facility":"0x...","holdings":{"TSLA":1000,"AMZN":500},"cashUsd":50000}'
-# borrow USDG (facility.borrow), then appoint the agent (facility.setAgent(agent, expiry, maxPositionUsd, [TSLA, NFLX]))
-curl -X POST localhost:8789/facility -d '{"facility":"0x..."}'
-curl -X POST localhost:8789/tick                                  # agent decides and trades
-curl -X POST localhost:8789/try -d '{"action":"buy","symbol":"AMZN","usd":10000}'  # refused onchain: OutsideMandate
-curl -X POST localhost:8788/session -d '{"open":false}'          # Friday 4pm: buying power 700k -> 364k
-curl -X POST localhost:8788/shock -d '{"symbol":"TSLA","pct":-16}' # Saturday crash: keeper deleverages, facility -> CURE
-curl -X POST localhost:8787/revoke -d '{"facility":"0x..."}'      # broker revokes: facility FROZEN in the same block
-```
+In your wallet, add the network (the app offers to), then fund the wallet with `pnpm demo faucet <address>`. See [docs/DEMO.md](docs/DEMO.md) for the full storyline.
 
 ## Robinhood Chain testnet
 
-Chain id 46630, RPC `https://rpc.testnet.chain.robinhood.com`, explorer `https://explorer.testnet.chain.robinhood.com`. Set `CHAIN_ID=46630`, `RPC_URL`, `USE_MOCKS=false`, then `pnpm deploy:testnet`. Defaults use the testnet faucet stock tokens and USDG (addresses in [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)).
+Chain id 46630, RPC `https://rpc.testnet.chain.robinhood.com`, explorer `https://explorer.testnet.chain.robinhood.com`. Set `CHAIN_ID=46630`, `RPC_URL`, `USE_MOCKS=true`, then `pnpm deploy:testnet`. Current addresses: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md).

@@ -12,6 +12,10 @@ contracts/deployments/31337.json
 
 # Services
 broker/state.*.json
+broker/brokerage.*.json
+broker/customers.*.json
+broker/links.*.json
+agent/assignments.*.json
 
 # Web
 web/.next/

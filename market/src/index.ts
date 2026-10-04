@@ -1,5 +1,6 @@
-// Demo market operator. Robinhood Chain's testnet stock feeds are mocks, so the demo runs its own
-// operator-controlled feeds (badged "demo feed" in the UI) to make "Friday close" and "Saturday crash" repeatable.
+// Market operator. Robinhood Chain's testnet stock feeds are mocks, so Hapax runs its own operator-controlled
+// feeds to make "Friday close" and "Saturday crash" repeatable. Every route is part of the demo control plane
+// (/admin/*, x-admin-token); the app only ever reads the feeds onchain.
 //
 //   session OPEN   : republish reference AND live prices every tick (reference stays fresh => market open)
 //   session CLOSED : republish live prices only; the reference goes stale after its heartbeat => market closed
@@ -87,13 +88,13 @@ async function quotes() {
 }
 
 serve("market", Number(env("MARKET_PORT", "8788")), {
-  "GET /market": async () => ({ ...market, demoFeeds: true, quotes: await quotes() }),
+  "GET /admin/market": async () => ({ ...market, demoFeeds: true, quotes: await quotes() }),
 
   /**
    * { open: false } = Friday 4pm. The reference stops publishing and its last print is dated past the heartbeat,
    * so the oracle sees a closed session immediately instead of after the heartbeat lapses.
    */
-  "POST /session": async (b: { open: boolean }) => {
+  "POST /admin/session": async (b: { open: boolean }) => {
     market.open = b.open;
     log(`session ${b.open ? "OPEN" : "CLOSED"}`);
     if (!b.open) await backdateReference();
@@ -102,7 +103,7 @@ serve("market", Number(env("MARKET_PORT", "8788")), {
   },
 
   /** { symbol: "TSLA", price: 210 } moves the 24/7 live market (and the reference too while open). */
-  "POST /price": async (b: { symbol: StockSymbol; price: number }) => {
+  "POST /admin/price": async (b: { symbol: StockSymbol; price: number }) => {
     if (!SYMBOLS.includes(b.symbol)) throw new Error(`Unknown symbol ${b.symbol}`);
     market.live[b.symbol] = b.price;
     log(`${b.symbol} live -> $${b.price}`);
@@ -111,7 +112,8 @@ serve("market", Number(env("MARKET_PORT", "8788")), {
   },
 
   /** { symbol: "TSLA", pct: -16 } relative move from the last reference price. */
-  "POST /shock": async (b: { symbol: StockSymbol; pct: number }) => {
+  "POST /admin/shock": async (b: { symbol: StockSymbol; pct: number }) => {
+    if (!SYMBOLS.includes(b.symbol)) throw new Error(`Unknown symbol ${b.symbol}`);
     market.live[b.symbol] = +(market.reference[b.symbol] * (1 + b.pct / 100)).toFixed(4);
     log(`${b.symbol} shock ${b.pct}% -> $${market.live[b.symbol]}`);
     await tick();
@@ -119,6 +121,24 @@ serve("market", Number(env("MARKET_PORT", "8788")), {
   },
 });
 
+/** Resume from what is onchain, so a restart doesn't snap prices back to the deploy defaults. */
+async function resume() {
+  for (const s of SYMBOLS) {
+    const [ref, live] = await Promise.all([
+      publicClient.readContract({ address: d.stocks[s].refFeed, abi: demoFeedAbi, functionName: "latestRoundData" }),
+      publicClient.readContract({ address: d.stocks[s].liveFeed, abi: demoFeedAbi, functionName: "latestRoundData" }),
+    ]);
+    market.reference[s] = Number(ref[1]) / 1e8;
+    market.live[s] = Number(live[1]) / 1e8;
+  }
+  // A restart always reopens the session: a reference that went stale while the service was down is downtime,
+  // not a Friday close. Close it deliberately with `pnpm demo close`.
+  log(`resumed ${market.open ? "OPEN" : "CLOSED"} ${JSON.stringify(market.live)}`);
+}
+
 log(`operator ${wallet.account.address}, republishing every ${TICK / 1000}s`);
-tick().catch((e) => log(`initial publish failed: ${e.message}`));
+resume()
+  .catch((e) => log(`resume failed, using defaults: ${e.message}`))
+  .then(() => tick())
+  .catch((e) => log(`initial publish failed: ${e.message}`));
 setInterval(() => tick().catch((e) => log(`publish failed: ${e.message}`)), TICK);

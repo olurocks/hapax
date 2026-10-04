@@ -5,6 +5,7 @@ packages:
   - market
   - agent
   - sim
+  - control
   - web
 allowBuilds:
   esbuild: true

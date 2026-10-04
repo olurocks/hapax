@@ -19,7 +19,7 @@ const W = 760, H = 300, M = { l: 56, r: 156, t: 16, b: 34 };
 /** Live (24/7) vs reference (24/5) prices for one stock, with market-closed periods shaded. */
 export function PriceChart({ points, heartbeat, now, levels }: Props) {
   const live = points.filter((p) => p.feed === "live");
-  if (live.length < 2) return <p className="empty">Waiting for price updates from the market operator…</p>;
+  if (live.length < 2) return <p className="empty">Waiting for market prices…</p>;
 
   // Walk updates in order; a live print is "closed" when the latest reference is older than the heartbeat.
   let refAsOf = -Infinity;
